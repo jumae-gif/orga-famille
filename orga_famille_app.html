@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4CAF50">
+
+<meta charset="UTF-8">
+<title>Calendrier Garde</title>
+
+<style>
+{
+  "name": "Calendrier Famille",
+  "short_name": "Calendrier",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4CAF50",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+
+body { font-family: Arial; background:#f4f7fb; margin:0; padding:10px; }
+
+.controls {
+  background:white;
+  padding:15px;
+  border-radius:10px;
+  margin-bottom:15px;
+}
+
+#calendar {
+  display:grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap:10px;
+}
+
+.month {
+  background:white;
+  border-radius:10px;
+  padding:5px;
+}
+
+.month h2 {
+  text-align:center;
+  background:#333;
+  color:white;
+  padding:5px;
+  border-radius:8px;
+}
+
+.day {
+  transition: transform 0.1s ease;
+}
+
+.day:hover {
+  transform: scale(1.03);
+  z-index:2;
+}
+
+.grid {
+  display:grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap:4px;
+}
+
+.header {
+  text-align:center;
+  font-weight:bold;
+}
+
+.day {
+  border-radius:12px;
+  min-height:90px;
+  padding:8px;
+  font-size:14px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+/* couleurs */
+.papa { background:#64b5f6; }
+.maman { background:#f48fb1; }
+.mixte { background:#fff176; }
+
+.papaVac { background:#1565c0; color:white; }
+.mamanVac { background:#ad1457; color:white; }
+
+@media print {
+
+  body {
+    margin:0;
+    background:white;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .controls {
+    display:none;
+  }
+
+  /* PAGE CALENDRIER */
+  #calendar {
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap:12px;
+    padding:10px;
+  }
+
+  /* CARTE MOIS STYLE CALENDRIER MURAL */
+  .month {
+    border:1px solid #cfcfcf;
+    border-radius:14px;
+    padding:8px;
+    box-shadow:0 0 0 1px #eee inset;
+    page-break-inside: avoid;
+  }
+
+  .month h2 {
+    font-size:18px;
+    padding:6px;
+    border-radius:10px;
+    background:#2c3e50;
+    color:white;
+    margin-bottom:6px;
+    letter-spacing:1px;
+  }
+
+  /* GRILLE PLUS PRO */
+  .grid {
+    gap:3px;
+  }
+
+  .header {
+    font-size:10px;
+    color:#666;
+  }
+
+  /* CASES PLUS DESIGN */
+  .day {
+    min-height:60px;
+    border-radius:10px;
+    font-size:12px;
+    padding:4px;
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+  }
+
+  /* NUMÉRO PLUS IMPORTANT */
+  .day {
+    position:relative;
+  }
+
+  .day::before {
+    content: attr(data-day);
+    font-size:11px;
+    font-weight:bold;
+    position:absolute;
+    top:4px;
+    left:6px;
+    opacity:0.7;
+  }
+
+  /* WEEK-END PLUS LISIBLE */
+  .day:nth-child(7n),
+  .day:nth-child(7n-1) {
+    filter: brightness(0.97);
+  }
+
+}
+</style>
+
+</head>
+<body>
+
+<div class="controls">
+Année : <input type="number" id="year">
+
+Mois de départ :
+<select id="startMonth">
+<option value="0">Janvier</option>
+<option value="1">Février</option>
+<option value="2">Mars</option>
+<option value="3">Avril</option>
+<option value="4">Mai</option>
+<option value="5">Juin</option>
+<option value="6">Juillet</option>
+<option value="7">Août</option>
+<option value="8">Septembre</option>
+<option value="9">Octobre</option>
+<option value="10">Novembre</option>
+<option value="11">Décembre</option>
+</select>
+
+<br><br>
+
+<button onclick="generate()">🔄 Générer</button>
+<button onclick="window.print()">🖨️ PDF</button>
+</div>
+
+<div id="calendar"></div>
+
+<script>
+
+// -------- VACANCES API ----------
+let vacances=[];
+
+async function loadVacances(year){
+  const url=`https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-calendrier-scolaire&q=&rows=100&refine.zone=A&refine.start_date=${year}`;
+  const res=await fetch(url);
+  const data=await res.json();
+
+  vacances=data.records.map(r=>({
+    start:new Date(r.fields.start_date),
+    end:new Date(r.fields.end_date)
+  }));
+}
+
+function inVacances(d){
+  return vacances.find(v=>d>=v.start && d<=v.end);
+}
+
+// -------- FETE DES MERES ----------
+function getMothersDay(year){
+  let d=new Date(year,4,1), sundays=0;
+  while(true){
+    if(d.getDay()===0){
+      sundays++;
+      if(sundays===4) return d;
+    }
+    d.setDate(d.getDate()+1);
+  }
+}
+
+// -------- JOURS FERIES ----------
+function getJoursFeries(year){
+
+  function easter(y){
+    let f=Math.floor,G=y%19,C=f(y/100);
+    let H=(C-f(C/4)-f((8*C+13)/25)+19*G+15)%30;
+    let I=H-f(H/28)*(1-f(29/(H+1))*f((21-G)/11));
+    let J=(y+f(y/4)+I+2-C+f(C/4))%7;
+    let L=I-J;
+    let m=3+f((L+40)/44);
+    let d=L+28-31*f(m/4);
+    return new Date(y,m-1,d);
+  }
+
+  let e=easter(year);
+
+  return [
+    new Date(year,0,1),
+    new Date(year,4,1),
+    new Date(year,4,8),
+    new Date(year,6,14),
+    new Date(year,7,15),
+    new Date(year,10,1),
+    new Date(year,10,11),
+    new Date(year,11,25),
+
+    new Date(e.getTime()+86400000),
+    new Date(e.getTime()+39*86400000),
+    new Date(e.getTime()+50*86400000)
+  ];
+}
+
+function isPont(d,feries){
+  let day=d.getDay();
+  return feries.some(f=>{
+    let diff=(f-d)/(1000*60*60*24);
+    return (day===1 && diff===1)||(day===5 && diff===-1);
+  });
+}
+
+function getWeekStart(date){
+  let d = new Date(date);
+  let day = (d.getDay()+6)%7; // lundi = 0
+  d.setDate(d.getDate()-day);
+  d.setHours(0,0,0,0);
+  return d;
+}
+
+// -------- GENERATION ----------
+async function generate(){
+
+const supabaseUrl = "https://brrwdcdckjargwwtspdr.supabase.co";
+const supabaseKey = "sb_publishable_X6PP0RbeP8l9cLEw0BFWpQ_Yhdj-6bR";
+const supabase = supabase.createClient(supabaseUrl, supabaseKey);
+
+  const year=parseInt(yearInput.value);
+  const startMonth=parseInt(startMonthInput.value);
+
+  let overrides = {};
+
+async function loadData(){
+  let { data } = await supabase
+    .from("calendar")
+    .select("*")
+    .eq("id","family")
+    .single();
+
+  if(data?.data){
+    overrides = data.data;
+  }
+}
+
+function subscribe(){
+  supabase
+    .channel("calendar-sync")
+    .on("postgres_changes",
+      { event:"*", schema:"public", table:"calendar" },
+      payload => {
+        if(payload.new?.data){
+          overrides = payload.new.data;
+          generate();
+        }
+      })
+    .subscribe();
+}
+
+async function saveData(){
+  await supabase
+    .from("calendar")
+    .upsert({
+      id:"family",
+      data:overrides
+    });
+}
+  await loadVacances(year);
+
+  const feries=getJoursFeries(year);
+  let overrides=JSON.parse(localStorage.getItem("overrides")||"{}");
+
+  calendar.innerHTML="";
+
+  for(let m=startMonth;m<startMonth+3;m++){
+
+    let realMonth=m%12;
+    let currentYear=year+Math.floor(m/12);
+
+    let month=document.createElement("div");
+    month.className="month";
+
+    let title=document.createElement("h2");
+    title.innerText=new Date(currentYear,realMonth)
+      .toLocaleString('fr-FR',{month:'long'});
+    month.appendChild(title);
+
+    let grid=document.createElement("div");
+    grid.className="grid";
+
+    ["L","M","M","J","V","S","D"].forEach(d=>{
+      let h=document.createElement("div");
+      h.className="header";
+      h.innerText=d;
+      grid.appendChild(h);
+    });
+
+    let d=new Date(currentYear,realMonth,1);
+    let offset=(d.getDay()+6)%7;
+
+    for(let i=0;i<offset;i++) grid.appendChild(document.createElement("div"));
+
+    while(d.getMonth()===realMonth){
+
+      let div=document.createElement("div");
+      div.className="day";
+
+      let vac=inVacances(d);
+      let who="";
+
+      if(vac){
+
+		  let diffDays = Math.floor((d - vac.start)/(1000*60*60*24));
+		  let week = Math.floor(diffDays/7) + 1; // semaine 1 → 8
+
+		  // --- DETECTION VACANCES ETE (juillet-août)
+		  let isSummer = vac.start.getMonth() === 6; // juillet
+
+		  if(isSummer){
+
+			// règle personnalisée été
+			if([1,3,4,5].includes(week)){
+			  who = "papa";
+			} else {
+			  who = "maman";
+			}
+
+		  } else {
+			// autres vacances → alternance classique
+			who = (Math.floor((week-1)%2)===0) ? "papa" : "maman";
+		  }
+
+		  div.classList.add(who==="papa"?"papaVac":"mamanVac");
+		}
+      else{
+        let day=d.getDay();
+
+        if(day===1 || day===4){
+          who="maman";
+          div.classList.add("maman");
+        }
+        else if(day===2 || day===3){
+          who="mixte";
+          div.classList.add("mixte");
+        }
+        else{
+          let refYear = (realMonth <= 7) ? currentYear : currentYear + 1;
+			let mothersDay = getMothersDay(refYear);
+
+			// semaine de référence (celle de la fête des mères)
+			let refWeekStart = getWeekStart(mothersDay);
+
+			// semaine du jour courant
+			let currentWeekStart = getWeekStart(d);
+
+			// différence en semaines
+			let diffWeeks = Math.round(
+			  (currentWeekStart - refWeekStart) / (7*24*60*60*1000)
+			);
+
+			// alternance
+			who = (diffWeeks % 2 === 0) ? "maman" : "papa";
+          div.classList.add(who);
+        }
+      }
+
+      let key=d.toISOString().split("T")[0];
+      if(overrides[key]){
+        who=overrides[key];
+       div.className="day";
+
+			if(who==="maman") div.classList.add("maman");
+			if(who==="papa") div.classList.add("papa");
+			if(who==="mixte") div.classList.add("mixte");
+			if(who==="mamanVac") div.classList.add("mamanVac");
+			if(who==="papaVac") div.classList.add("papaVac");
+      }
+
+      let isFerie=feries.some(f=>f.toDateString()===d.toDateString());
+      let pont=isPont(d,feries);
+
+      if(isFerie) div.style.border="3px solid red";
+      if(pont) div.style.border="3px dashed orange";
+
+      let emoji =
+		  who==="maman" ? "👩👩" :
+		  who==="papa" ? "👨👨" :
+		  who==="mixte" ? "👩👨" :
+		  who==="mamanVac" ? "🌴👩" :
+		  who==="papaVac" ? "🌴👨" :
+		  "❓";
+
+      let extra=isFerie?"🎉":(pont?"🌉":"");
+
+      div.setAttribute("data-day", d.getDate());
+
+      div.onclick=()=>{
+        let current=overrides[key]||who;
+        let next;
+
+			switch(current){
+			  case "maman": next="papa"; break;
+			  case "papa": next="mixte"; break;
+			  case "mixte": next="mamanVac"; break;
+			  case "mamanVac": next="papaVac"; break;
+			  case "papaVac": next="maman"; break;
+			  default: next="maman";
+			}
+        overrides[key]=next;
+saveData();
+generate();
+      };
+
+      grid.appendChild(div);
+      d.setDate(d.getDate()+1);
+    }
+
+    month.appendChild(grid);
+    calendar.appendChild(month);
+  }
+}
+
+// INIT
+const yearInput=document.getElementById("year");
+const startMonthInput=document.getElementById("startMonth");
+const calendar=document.getElementById("calendar");
+
+yearInput.value=localStorage.getItem("year")||new Date().getFullYear();
+startMonthInput.value=localStorage.getItem("startMonth")||0;
+
+generate();
+
+async function initApp(){
+  await loadData();
+  subscribe();
+  generate();
+}
+
+initApp();
+
+</script>
+
+</body>
+</html>
